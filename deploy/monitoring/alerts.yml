@@ -1,0 +1,31 @@
+groups:
+- name: storvault
+  rules:
+  - alert: NoSuccessfulBackup24h
+    expr: time() - storvault_last_successful_backup_timestamp_seconds > 86400
+    for: 5m
+    labels: {severity: page}
+    annotations: {summary: "No successful StorVault backup in the last 24h"}
+  - alert: NoBackupEverRecorded
+    expr: absent(storvault_last_successful_backup_timestamp_seconds)
+    for: 1h
+    labels: {severity: warn}
+    annotations: {summary: "StorVault has never recorded a successful backup since the last restart"}
+  - alert: BackupJobsFailing
+    expr: increase(storvault_jobs_total{status="failed"}[1h]) > 2
+    labels: {severity: page}
+    annotations: {summary: "More than 2 StorVault jobs failed in the last hour"}
+  - alert: ChecksumMismatchDetected
+    expr: increase(storvault_agent_errors_total{type="checksum"}[15m]) > 0 or storvault_snapshots_failing_verification > 0
+    labels: {severity: page}
+    annotations: {summary: "Integrity validation failed - possible data corruption"}
+  - alert: HighS3RetryRate
+    expr: rate(storvault_agent_retries_total[5m]) > 1
+    for: 10m
+    labels: {severity: warn}
+    annotations: {summary: "Agent is retrying S3 calls heavily - storage or network degraded"}
+  - alert: StorVaultDown
+    expr: up{job="storvault"} == 0
+    for: 2m
+    labels: {severity: page}
+    annotations: {summary: "StorVault orchestrator is unreachable"}

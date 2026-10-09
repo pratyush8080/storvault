@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: storvault}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: storvault-config, namespace: storvault}
+data:
+  SV_HOT_ENDPOINT: "http://minio-hot:9000"
+  SV_HOT_BUCKET: "storvault-hot"
+  SV_COLD_ENDPOINT: "http://minio-cold:9000"     # point at Ceph RGW (e.g. http://rook-ceph-rgw-store.rook-ceph:80) in a real cluster
+  SV_COLD_BUCKET: "storvault-cold"
+  SV_DB_URL: "sqlite:////data/storvault.db"
+  SV_AGENT_THREADS: "8"
+  SV_JOB_MAX_ATTEMPTS: "4"
+  SV_MAINTENANCE_CRON: "*/30 * * * *"
+  SV_SCHEDULER: "1"
+---
+apiVersion: v1
+kind: Secret
+metadata: {name: storvault-secrets, namespace: storvault}
+type: Opaque
+stringData:                        # demo values - use sealed-secrets / external-secrets in real life
+  SV_HOT_ACCESS_KEY: "minioadmin"
+  SV_HOT_SECRET_KEY: "minioadmin"
+  SV_COLD_ACCESS_KEY: "coldadmin"
+  SV_COLD_SECRET_KEY: "coldadmin123"

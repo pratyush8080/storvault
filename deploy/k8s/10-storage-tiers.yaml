@@ -1,0 +1,67 @@
+# Hot tier (MinIO) and a cold-tier stand-in (second MinIO). Swap minio-cold for Ceph RGW (Rook) when available.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: minio-hot-data, namespace: storvault}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 5Gi}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: minio-cold-data, namespace: storvault}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 5Gi}}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: minio-hot, namespace: storvault}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: minio-hot}}
+  template:
+    metadata: {labels: {app: minio-hot}}
+    spec:
+      containers:
+        - name: minio
+          image: scnd/minio-mirror:RELEASE.2025-09-07T16-13-09Z
+          args: ["server", "/data"]
+          env:
+            - {name: MINIO_ROOT_USER, valueFrom: {secretKeyRef: {name: storvault-secrets, key: SV_HOT_ACCESS_KEY}}}
+            - {name: MINIO_ROOT_PASSWORD, valueFrom: {secretKeyRef: {name: storvault-secrets, key: SV_HOT_SECRET_KEY}}}
+            - {name: MINIO_PROMETHEUS_AUTH_TYPE, value: public}
+          ports: [{containerPort: 9000}]
+          readinessProbe: {httpGet: {path: /minio/health/ready, port: 9000}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /minio/health/live, port: 9000}, periodSeconds: 10}
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes: [{name: data, persistentVolumeClaim: {claimName: minio-hot-data}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: minio-hot, namespace: storvault}
+spec: {selector: {app: minio-hot}, ports: [{port: 9000, targetPort: 9000}]}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: minio-cold, namespace: storvault}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: minio-cold}}
+  template:
+    metadata: {labels: {app: minio-cold}}
+    spec:
+      containers:
+        - name: minio
+          image: scnd/minio-mirror:RELEASE.2025-09-07T16-13-09Z
+          args: ["server", "/data"]
+          env:
+            - {name: MINIO_ROOT_USER, valueFrom: {secretKeyRef: {name: storvault-secrets, key: SV_COLD_ACCESS_KEY}}}
+            - {name: MINIO_ROOT_PASSWORD, valueFrom: {secretKeyRef: {name: storvault-secrets, key: SV_COLD_SECRET_KEY}}}
+          ports: [{containerPort: 9000}]
+          readinessProbe: {httpGet: {path: /minio/health/ready, port: 9000}, periodSeconds: 5}
+          livenessProbe: {httpGet: {path: /minio/health/live, port: 9000}, periodSeconds: 10}
+          volumeMounts: [{name: data, mountPath: /data}]
+      volumes: [{name: data, persistentVolumeClaim: {claimName: minio-cold-data}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: minio-cold, namespace: storvault}
+spec: {selector: {app: minio-cold}, ports: [{port: 9000, targetPort: 9000}]}

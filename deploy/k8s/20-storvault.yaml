@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: storvault-catalog, namespace: storvault}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 1Gi}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: storvault-source, namespace: storvault}     # data to back up (mounted read-only below)
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 2Gi}}}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: storvault-restore, namespace: storvault}
+spec: {accessModes: [ReadWriteOnce], resources: {requests: {storage: 2Gi}}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: storvault, namespace: storvault}
+spec:
+  replicas: 1                        # SQLite catalog => single writer. Use Postgres to scale out.
+  strategy: {type: Recreate}         # RWO volume: never run two pods at once during rollout
+  selector: {matchLabels: {app: storvault}}
+  template:
+    metadata:
+      labels: {app: storvault}
+      annotations: {prometheus.io/scrape: "true", prometheus.io/port: "8080", prometheus.io/path: "/metrics"}
+    spec:
+      securityContext: {runAsUser: 10001, fsGroup: 10001, runAsNonRoot: true}
+      containers:
+        - name: storvault
+          image: storvault:latest
+          imagePullPolicy: IfNotPresent      # `kind load docker-image storvault:latest`
+          ports: [{containerPort: 8080, name: http}]
+          envFrom:
+            - configMapRef: {name: storvault-config}
+            - secretRef: {name: storvault-secrets}
+          startupProbe: {httpGet: {path: /healthz, port: http}, failureThreshold: 30, periodSeconds: 2}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, periodSeconds: 10, failureThreshold: 3}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, periodSeconds: 5, failureThreshold: 3}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 1Gi}}
+          volumeMounts:
+            - {name: catalog, mountPath: /data}
+            - {name: source, mountPath: /source, readOnly: true}
+            - {name: restore, mountPath: /restore}
+      volumes:
+        - {name: catalog, persistentVolumeClaim: {claimName: storvault-catalog}}
+        - {name: source, persistentVolumeClaim: {claimName: storvault-source}}
+        - {name: restore, persistentVolumeClaim: {claimName: storvault-restore}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: storvault, namespace: storvault}
+spec: {selector: {app: storvault}, ports: [{port: 8080, targetPort: http, name: http}]}
+---
+# Scheduled backup as a Kubernetes CronJob: triggers the orchestrator API (catalog + metrics stay consistent).
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: storvault-nightly-backup, namespace: storvault}
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: trigger
+              image: curlimages/curl:8.8.0
+              args: ["-fsS", "-X", "POST", "http://storvault:8080/jobs/backup",
+                     "-H", "Content-Type: application/json", "-d", '{"source_path":"/source"}']

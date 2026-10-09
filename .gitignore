@@ -1,0 +1,10 @@
+build*/
+agent/build*/
+__pycache__/
+*.pyc
+*.db
+.pytest_cache/
+/restore/
+.venv/
+deploy/sample-data/notes.txt
+deploy/sample-data/random.bin

@@ -1,0 +1,64 @@
+# configmaps `prometheus-config` and `grafana-dashboards` are created by scripts/k8s-up.sh from deploy/monitoring/
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: prometheus, namespace: storvault}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: prometheus}}
+  template:
+    metadata: {labels: {app: prometheus}}
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:latest
+          args: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=7d"]
+          ports: [{containerPort: 9090}]
+          readinessProbe: {httpGet: {path: /-/ready, port: 9090}}
+          volumeMounts: [{name: cfg, mountPath: /etc/prometheus}]
+      volumes: [{name: cfg, configMap: {name: prometheus-config}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: prometheus, namespace: storvault}
+spec: {selector: {app: prometheus}, ports: [{port: 9090}]}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: grafana-provisioning, namespace: storvault}
+data:
+  ds.yml: |
+    apiVersion: 1
+    datasources:
+      - {name: Prometheus, uid: prom, type: prometheus, access: proxy, url: "http://prometheus:9090", isDefault: true}
+  db.yml: |
+    apiVersion: 1
+    providers:
+      - {name: storvault, type: file, options: {path: /var/lib/grafana/dashboards}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: grafana, namespace: storvault}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: grafana}}
+  template:
+    metadata: {labels: {app: grafana}}
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:latest
+          env: [{name: GF_SECURITY_ADMIN_PASSWORD, value: admin}]
+          ports: [{containerPort: 3000}]
+          readinessProbe: {httpGet: {path: /api/health, port: 3000}}
+          volumeMounts:
+            - {name: ds, mountPath: /etc/grafana/provisioning/datasources/ds.yml, subPath: ds.yml}
+            - {name: ds, mountPath: /etc/grafana/provisioning/dashboards/db.yml, subPath: db.yml}
+            - {name: dash, mountPath: /var/lib/grafana/dashboards}
+      volumes:
+        - {name: ds, configMap: {name: grafana-provisioning}}
+        - {name: dash, configMap: {name: grafana-dashboards}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: grafana, namespace: storvault}
+spec: {selector: {app: grafana}, ports: [{port: 3000}]}

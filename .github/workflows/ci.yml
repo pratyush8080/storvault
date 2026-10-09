@@ -1,0 +1,24 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build libssl-dev libcurl4-openssl-dev
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: pip install -r orchestrator/requirements-dev.txt
+      - name: Build agent + unit tests
+        run: make build && ./agent/build/sv_tests
+      - name: ThreadSanitizer + ASan/UBSan unit tests
+        run: |
+          cmake -S agent -B agent/build-tsan -G Ninja -DSV_TSAN=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo && cmake --build agent/build-tsan && ./agent/build-tsan/sv_tests
+          cmake -S agent -B agent/build-asan -G Ninja -DSV_ASAN=ON -DCMAKE_BUILD_TYPE=Debug && cmake --build agent/build-asan && ./agent/build-asan/sv_tests
+      - name: Integration + failure-injection tests
+        run: python -m pytest tests -v
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f deploy/Dockerfile --target orchestrator -t storvault:ci .
